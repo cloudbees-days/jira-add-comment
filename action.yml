@@ -1,0 +1,322 @@
+apiVersion: automation.cloudbees.io/v1alpha1
+kind: action
+name: jira-add-comment
+description: "Add comments to Jira issue(s) with support for visibility and formatting"
+inputs:
+  jira-url:
+    description: "Jira instance URL (e.g., https://your-domain.atlassian.net)"
+    required: true
+  jira-username:
+    description: "Jira username or email address"
+    required: true
+  jira-token:
+    description: "Jira API token"
+    required: true
+  issue-key:
+    description: "Single issue key to comment on (e.g., PROJ-123). Mutually exclusive with jql."
+    required: false
+  jql:
+    description: "JQL query to find issues to comment on. Mutually exclusive with issue-key."
+    required: false
+  comment:
+    description: "Comment text to add. Supports Jira text formatting and markdown."
+    required: true
+  visibility:
+    description: 'Comment visibility: "all" (default), "internal", "group:groupname", "role:rolename"'
+    default: "all"
+    required: false
+  max-results:
+    description: "Maximum number of issues to comment on when using JQL"
+    default: "50"
+    required: false
+  continue-on-error:
+    description: "Whether to continue commenting on other issues if one fails"
+    default: "true"
+    required: false
+
+outputs:
+  commented-issues:
+    value: ${{ steps.add-comment.outputs.commented-issues }}
+    description: "JSON array of issues that were successfully commented"
+  failed-comments:
+    value: ${{ steps.add-comment.outputs.failed-comments }}
+    description: "JSON array of issues that failed to receive comments"
+  comment-count:
+    value: ${{ steps.add-comment.outputs.comment-count }}
+    description: "Number of issues successfully commented"
+  comment-ids:
+    value: ${{ steps.add-comment.outputs.comment-ids }}
+    description: "JSON array of created comment IDs"
+
+runs:
+  using: composite
+  steps:
+    - id: add-comment
+      name: Add Jira Comments
+      uses: docker://alpine:3.22
+      shell: sh
+      run: |
+        set -e
+
+        # Install required tools
+        apk add --no-cache curl jq
+
+        # Validate inputs
+        if [ -z "${{ inputs.jira-url }}" ]; then
+          echo "Error: jira-url is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.jira-username }}" ]; then
+          echo "Error: jira-username is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.jira-token }}" ]; then
+          echo "Error: jira-token is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.comment }}" ]; then
+          echo "Error: comment is required"
+          exit 1
+        fi
+
+        # Validate that either issue-key or jql is provided, but not both
+        if [ -n "${{ inputs.issue-key }}" ] && [ -n "${{ inputs.jql }}" ]; then
+          echo "Error: Cannot specify both issue-key and jql. Use one or the other."
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.issue-key }}" ] && [ -z "${{ inputs.jql }}" ]; then
+          echo "Error: Must specify either issue-key or jql"
+          exit 1
+        fi
+
+        # Clean up URL
+        JIRA_URL="${{ inputs.jira-url }}"
+        JIRA_URL="${JIRA_URL%/}"
+
+        # Parse visibility setting
+        VISIBILITY="${{ inputs.visibility }}"
+        echo "Comment visibility: $VISIBILITY"
+
+        # Build visibility JSON based on input
+        case "$VISIBILITY" in
+          "all"|"")
+            VISIBILITY_JSON="null"
+            ;;
+          "internal")
+            VISIBILITY_JSON='{"type":"group","value":"jira-users"}'
+            ;;
+          group:*)
+            GROUP_NAME=$(echo "$VISIBILITY" | sed 's/^group://')
+            VISIBILITY_JSON=$(jq -n --arg group "$GROUP_NAME" '{"type":"group","value":$group}')
+            ;;
+          role:*)
+            ROLE_NAME=$(echo "$VISIBILITY" | sed 's/^role://')
+            VISIBILITY_JSON=$(jq -n --arg role "$ROLE_NAME" '{"type":"role","value":$role}')
+            ;;
+          *)
+            echo "Error: Invalid visibility format. Use 'all', 'internal', 'group:name', or 'role:name'"
+            exit 1
+            ;;
+        esac
+
+        echo "Visibility JSON: $VISIBILITY_JSON"
+
+        # Determine which issues to comment on
+        if [ -n "${{ inputs.issue-key }}" ]; then
+          echo "Adding comment to single issue: ${{ inputs.issue-key }}"
+          # Create a simple JSON array with just this issue
+          ISSUES_TO_COMMENT='[{"key":"${{ inputs.issue-key }}","fields":{"summary":"Single issue"}}]'
+        else
+          echo "Finding issues to comment on with JQL: ${{ inputs.jql }}"
+          
+          SEARCH_URL="${JIRA_URL}/rest/api/3/search"
+          QUERY_PARAMS="jql=$(echo '${{ inputs.jql }}' | sed 's/ /%20/g')&fields=key,summary&maxResults=${{ inputs.max-results }}"
+          
+          SEARCH_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET \
+            -H "Accept: application/json" \
+            -u "${{ inputs.jira-username }}:${{ inputs.jira-token }}" \
+            "${SEARCH_URL}?${QUERY_PARAMS}")
+          
+          SEARCH_HTTP_STATUS=$(echo "$SEARCH_RESPONSE" | tail -n1 | sed 's/.*HTTP_STATUS://')
+          SEARCH_RESPONSE_BODY=$(echo "$SEARCH_RESPONSE" | sed '$d')
+          
+          if [ "$SEARCH_HTTP_STATUS" -ne 200 ]; then
+            echo "Error: Search request failed with status $SEARCH_HTTP_STATUS"
+            echo "Response: $SEARCH_RESPONSE_BODY"
+            exit 1
+          fi
+          
+          ISSUES_TO_COMMENT=$(echo "$SEARCH_RESPONSE_BODY" | jq -c '.issues')
+        fi
+
+        ISSUE_COUNT=$(echo "$ISSUES_TO_COMMENT" | jq 'length')
+        echo "Found $ISSUE_COUNT issue(s) to comment on"
+
+        if [ "$ISSUE_COUNT" -eq 0 ]; then
+          echo "No issues found to comment on"
+          echo "[]" > "$CLOUDBEES_OUTPUTS/commented-issues"
+          echo "[]" > "$CLOUDBEES_OUTPUTS/failed-comments"
+          echo "0" > "$CLOUDBEES_OUTPUTS/comment-count"
+          echo "[]" > "$CLOUDBEES_OUTPUTS/comment-ids"
+          exit 0
+        fi
+
+        # Prepare comment text (escape for JSON)
+        COMMENT_TEXT='${{ inputs.comment }}'
+        echo "Comment text preview:"
+        echo "========================================"
+        echo "$COMMENT_TEXT"
+        echo "========================================"
+
+        # Build comment payload
+        if [ "$VISIBILITY_JSON" = "null" ]; then
+          COMMENT_PAYLOAD=$(jq -n --arg body "$COMMENT_TEXT" '{"body":$body}')
+        else
+          COMMENT_PAYLOAD=$(jq -n --arg body "$COMMENT_TEXT" --argjson visibility "$VISIBILITY_JSON" '{"body":$body,"visibility":$visibility}')
+        fi
+
+        echo "Comment payload: $COMMENT_PAYLOAD"
+
+        # Initialize tracking
+        TEMP_DIR="/tmp/jira_comment_$$"
+        mkdir -p "$TEMP_DIR"
+        echo "[]" > "$TEMP_DIR/commented_issues.json"
+        echo "[]" > "$TEMP_DIR/failed_comments.json"
+        echo "[]" > "$TEMP_DIR/comment_ids.json"
+        echo "0" > "$TEMP_DIR/success_count.txt"
+
+        CONTINUE_ON_ERROR="${{ inputs.continue-on-error }}"
+
+        # Add comments to each issue
+        echo ""
+        echo "Adding comments..."
+        echo "========================================"
+
+        echo "$ISSUES_TO_COMMENT" | jq -c '.[]' | while read -r issue; do
+          ISSUE_KEY=$(echo "$issue" | jq -r '.key')
+          ISSUE_SUMMARY=$(echo "$issue" | jq -r '.fields.summary // "Unknown"')
+          
+          echo ""
+          echo "Commenting on: $ISSUE_KEY - $ISSUE_SUMMARY"
+          
+          COMMENT_URL="${JIRA_URL}/rest/api/3/issue/${ISSUE_KEY}/comment"
+          
+          COMMENT_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -u "${{ inputs.jira-username }}:${{ inputs.jira-token }}" \
+            -d "$COMMENT_PAYLOAD" \
+            "$COMMENT_URL")
+          
+          COMMENT_HTTP_STATUS=$(echo "$COMMENT_RESPONSE" | tail -n1 | sed 's/.*HTTP_STATUS://')
+          COMMENT_RESPONSE_BODY=$(echo "$COMMENT_RESPONSE" | sed '$d')
+          
+          if [ "$COMMENT_HTTP_STATUS" -eq 201 ]; then
+            echo "  ✅ Successfully added comment to $ISSUE_KEY"
+            
+            # Extract comment ID
+            COMMENT_ID=$(echo "$COMMENT_RESPONSE_BODY" | jq -r '.id // "unknown"')
+            
+            # Add to successful comments
+            CURRENT_COMMENTED=$(cat "$TEMP_DIR/commented_issues.json")
+            ENHANCED_ISSUE=$(echo "$issue" | jq --arg commentId "$COMMENT_ID" '. + {commentId: $commentId}')
+            echo "$CURRENT_COMMENTED" | jq --argjson issue "$ENHANCED_ISSUE" '. + [$issue]' > "$TEMP_DIR/commented_issues.json"
+            
+            # Add comment ID to list
+            CURRENT_IDS=$(cat "$TEMP_DIR/comment_ids.json")
+            echo "$CURRENT_IDS" | jq --arg id "$COMMENT_ID" '. + [$id]' > "$TEMP_DIR/comment_ids.json"
+            
+            # Increment success count
+            CURRENT_COUNT=$(cat "$TEMP_DIR/success_count.txt")
+            echo $((CURRENT_COUNT + 1)) > "$TEMP_DIR/success_count.txt"
+            
+          else
+            echo "  ❌ Failed to add comment to $ISSUE_KEY (HTTP $COMMENT_HTTP_STATUS)"
+            echo "     Response: $COMMENT_RESPONSE_BODY"
+            
+            # Extract error details
+            ERROR_MESSAGE="HTTP $COMMENT_HTTP_STATUS"
+            if echo "$COMMENT_RESPONSE_BODY" | jq . > /dev/null 2>&1; then
+              ERROR_DETAILS=$(echo "$COMMENT_RESPONSE_BODY" | jq -r '.errorMessages[]? // .errors // empty' 2>/dev/null | head -1)
+              if [ -n "$ERROR_DETAILS" ]; then
+                ERROR_MESSAGE="$ERROR_DETAILS"
+              fi
+            fi
+            
+            FAILED_COMMENT=$(jq -n \
+              --argjson issue "$issue" \
+              --arg status "$COMMENT_HTTP_STATUS" \
+              --arg error "$ERROR_MESSAGE" \
+              '{
+                issue: $issue,
+                httpStatus: $status,
+                error: $error
+              }')
+            
+            # Add to failed comments
+            CURRENT_FAILED=$(cat "$TEMP_DIR/failed_comments.json")
+            echo "$CURRENT_FAILED" | jq --argjson failed "$FAILED_COMMENT" '. + [$failed]' > "$TEMP_DIR/failed_comments.json"
+            
+            # Check if we should continue or fail
+            if [ "$CONTINUE_ON_ERROR" != "true" ]; then
+              echo "  🛑 Stopping due to error (continue-on-error is false)"
+              rm -rf "$TEMP_DIR"
+              exit 1
+            fi
+          fi
+        done
+
+        # Read final results
+        COMMENTED_ISSUES=$(cat "$TEMP_DIR/commented_issues.json")
+        FAILED_COMMENTS=$(cat "$TEMP_DIR/failed_comments.json")
+        COMMENT_IDS=$(cat "$TEMP_DIR/comment_ids.json")
+        SUCCESS_COUNT=$(cat "$TEMP_DIR/success_count.txt")
+
+        # Cleanup
+        rm -rf "$TEMP_DIR"
+
+        # Calculate final counts
+        FAILED_COUNT=$(echo "$FAILED_COMMENTS" | jq 'length')
+
+        echo ""
+        echo "========================================"
+        echo "Comment Summary:"
+        echo "  Successfully commented: $SUCCESS_COUNT issues"
+        echo "  Failed comments: $FAILED_COUNT issues"
+
+        if [ "$SUCCESS_COUNT" -gt 0 ]; then
+          echo ""
+          echo "Successfully commented issues:"
+          echo "$COMMENTED_ISSUES" | jq -r '.[] | "  ✅ \(.key): \(.fields.summary)"'
+        fi
+
+        if [ "$FAILED_COUNT" -gt 0 ]; then
+          echo ""
+          echo "Failed to comment:"
+          echo "$FAILED_COMMENTS" | jq -r '.[] | "  ❌ \(.issue.key): \(.error)"'
+        fi
+
+        # Set outputs
+        echo "$COMMENTED_ISSUES" > "$CLOUDBEES_OUTPUTS/commented-issues"
+        echo "$FAILED_COMMENTS" > "$CLOUDBEES_OUTPUTS/failed-comments"
+        echo "$SUCCESS_COUNT" > "$CLOUDBEES_OUTPUTS/comment-count"
+        echo "$COMMENT_IDS" > "$CLOUDBEES_OUTPUTS/comment-ids"
+
+        # Final exit status
+        if [ "$FAILED_COUNT" -gt 0 ] && [ "$SUCCESS_COUNT" -eq 0 ]; then
+          echo ""
+          echo "❌ All comment attempts failed"
+          exit 1
+        elif [ "$FAILED_COUNT" -gt 0 ]; then
+          echo ""
+          echo "⚠️  Some comments failed, but at least one succeeded"
+        else
+          echo ""
+          echo "🎉 All comments added successfully!"
+        fi
