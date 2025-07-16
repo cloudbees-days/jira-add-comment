@@ -46,7 +46,7 @@ Use this action to add comments to Jira issue(s) with support for different visi
 | `visibility`
 | String
 | No
-| Comment visibility: `"all"` (default), `"internal"`, `"group:groupname"`, `"role:rolename"`
+| Comment visibility: `"public"` (default), `"private"`, or group/role name
 
 | `max-results`
 | Number
@@ -72,21 +72,13 @@ Use this action to add comments to Jira issue(s) with support for different visi
 | Data type
 | Description
 
-| `commented-issues`
-| JSON Array
-| Array of issues that were successfully commented
-
-| `failed-comments`
-| JSON Array
-| Array of issues that failed to receive comments with error details
-
 | `comment-count`
 | Number
-| Number of issues successfully commented
+| Number of issues that received comments
 
-| `comment-ids`
+| `commented-issues`
 | JSON Array
-| Array of created comment IDs for referencing the comments later
+| JSON array of issue keys that received comments
 
 |===
 
