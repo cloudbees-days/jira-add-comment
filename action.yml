@@ -48,7 +48,7 @@ runs:
     - id: add-comment
       name: Add Comment to Jira Issues
       uses: docker://ldonleycb/jira-actions:latest
-      shell: bash
+      shell: sh
       run: |
         /app/jira-actions add-comment \
           --url "${{ inputs.jira-url }}" \
