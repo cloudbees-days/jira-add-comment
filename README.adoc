@@ -1,6 +1,6 @@
 = CloudBees action: Add Jira Comments
 
-Use this action to add comments to Jira issue(s) with support for different visibility levels and formatting. Perfect for status updates, deployment notifications, and team communication.
+Add comments to Jira issues with support for single issues or multiple issues via JQL queries.
 
 == Inputs
 
@@ -21,12 +21,12 @@ Use this action to add comments to Jira issue(s) with support for different visi
 | `jira-username`
 | String
 | Yes
-| Jira username or email address for authentication
+| Jira username or email address
 
 | `jira-token`
 | String
 | Yes
-| Jira API token. Generate this in your Jira account settings under Security > API tokens
+| Jira API token
 
 | `issue-key`
 | String
@@ -41,7 +41,7 @@ Use this action to add comments to Jira issue(s) with support for different visi
 | `comment`
 | String
 | Yes
-| Comment text to add. Supports Jira text formatting and markdown.
+| Comment text to add
 
 | `visibility`
 | String
@@ -84,444 +84,55 @@ Use this action to add comments to Jira issue(s) with support for different visi
 
 == Usage Examples
 
-=== Basic Comment - Single Issue
+=== Add Comment to Single Issue
 
 [source,yaml]
 ----
-- name: Add deployment status comment
-  uses: ./jira-add-comment
-  id: deployment-comment
+- name: Add deployment comment
+  uses: https://github.com/cloudbees-days/jira-add-comment@v1
   with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
+    jira-url: ${{ vars.JIRA_URL }}
+    jira-username: ${{ vars.JIRA_USERNAME }}
     jira-token: ${{ secrets.JIRA_TOKEN }}
     issue-key: "PROJ-123"
-    comment: |
-      🚀 **Deployment Update**
-      
-      Version ${{ github.ref_name }} has been successfully deployed to production!
-      
-      **Details:**
-      - Build: ${{ github.run_id }}
-      - Commit: ${{ github.sha }}
-      - Deployed by: ${{ github.actor }}
-      - Deployment time: $(date)
-
-- name: Show comment result
-  uses: docker://alpine:3.22
-  shell: sh
-  run: |
-    echo "Successfully commented on ${{ steps.deployment-comment.outputs.comment-count }} issues"
-    echo "Comment IDs: ${{ steps.deployment-comment.outputs.comment-ids }}"
-----
-
-=== Bulk Comments - Multiple Issues
-
-[source,yaml]
-----
-- name: Update all release issues
-  uses: ./jira-add-comment
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = MYPROJECT AND fixVersion = '${{ github.ref_name }}'"
-    comment: |
-      📋 **Release ${{ github.ref_name }} Status Update**
-      
-      This issue is included in the current release cycle.
-      
-      **Timeline:**
-      - Code freeze: Complete ✅
-      - Testing phase: In progress 🧪
-      - Expected release: End of week
-      
-      Please ensure all work is completed and tested.
-    visibility: "all"
-    max-results: 100
-----
-
-=== Internal Team Comments
-
-[source,yaml]
-----
-- name: Add internal development notes
-  uses: ./jira-add-comment
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = DEV AND sprint in openSprints() AND assignee = currentUser()"
-    visibility: "internal"
-    comment: |
-      🔧 **Development Notes (Internal)**
-      
-      Automated build completed with the following results:
-      - Unit tests: ✅ All passing
-      - Code coverage: 92%
-      - Build time: 3m 42s
-      - Artifacts: Available in build ${{ github.run_id }}
-      
-      Ready for code review.
-----
-
-=== Role-Specific Comments
-
-[source,yaml]
-----
-- name: Security team notification
-  uses: ./jira-add-comment
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    issue-key: ${{ steps.security-review.outputs.issue-key }}
-    visibility: "role:Security"
-    comment: |
-      🔒 **Security Review Required**
-      
-      This change includes security-sensitive modifications:
-      
-      **Changes:**
-      - Authentication flow updates
-      - New API endpoints
-      - Database schema changes
-      
-      **Security Checklist:**
-      - [ ] Input validation reviewed
-      - [ ] Authentication mechanisms verified
-      - [ ] Authorization controls checked
-      - [ ] Sensitive data handling reviewed
-      
-      Please complete security review and update status.
-----
-
-=== Build Status Updates
-
-[source,yaml]
-----
-- name: Update build status
-  uses: ./jira-add-comment
-  continue-on-error: true
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = CI AND labels = 'build-tracking' AND status != Done"
-    comment: |
-      🏗️ **Build Status: ${{ job.status }}**
-      
-      **Repository:** ${{ github.repository }}
-      **Branch:** ${{ github.ref_name }}
-      **Commit:** ${{ github.sha }}
-      **Build ID:** ${{ github.run_id }}
-      **Triggered by:** ${{ github.actor }}
-      
-      {% if job.status == 'success' %}
-      ✅ **Build Successful**
-      - All tests passed
-      - Artifacts generated
-      - Ready for deployment
-      {% elsif job.status == 'failure' %}
-      ❌ **Build Failed**
-      - Check logs for details
-      - Fix required before deployment
-      {% else %}
-      ⏳ **Build In Progress**
-      - Running tests and checks
-      {% endif %}
-      
-      [View Build Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-----
-
-=== Test Results Notification
-
-[source,yaml]
-----
-- name: Run tests
-  id: tests
-  run: npm test
-  continue-on-error: true
-
-- name: Comment test results
-  uses: ./jira-add-comment
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = QA AND fixVersion = '${{ github.ref_name }}' AND status = 'Testing'"
-    comment: |
-      🧪 **Automated Test Results**
-      
-      {% if steps.tests.outcome == 'success' %}
-      ✅ **All Tests Passed**
-      
-      Great news! All automated tests are passing for this version.
-      You can proceed with manual testing.
-      {% else %}
-      ❌ **Tests Failed**
-      
-      Some automated tests are failing. Please check the issues before
-      continuing with manual testing:
-      
-      [View Test Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-      {% endif %}
-      
-      **Test Summary:**
-      - Build: ${{ github.run_id }}
-      - Commit: ${{ github.sha }}
-      - Branch: ${{ github.ref_name }}
-----
-
-=== Conditional Comments Based on Status
-
-[source,yaml]
-----
-- name: Get issue status first
-  uses: ./jira-get-issues
-  id: check-status
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    issue-key: "PROJ-123"
-    fields: "status"
-
-- name: Add status-specific comment
-  uses: ./jira-add-comment
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    issue-key: "PROJ-123"
-    comment: |
-      📊 **Automated Status Update**
-      
-      Current status: ${{ fromJson(steps.check-status.outputs.issues)[0].fields.status.name }}
-      
-      {% if fromJson(steps.check-status.outputs.issues)[0].fields.status.name == 'In Progress' %}
-      ⚡ Work is actively being done on this issue.
-      Automated monitoring is active.
-      {% elsif fromJson(steps.check-status.outputs.issues)[0].fields.status.name == 'Testing' %}
-      🧪 Issue is in testing phase.
-      Automated tests will be run and results posted here.
-      {% else %}
-      ℹ️  Issue status has been updated.
-      {% endif %}
-----
-
-== Comment Formatting
-
-Jira supports rich text formatting in comments:
-
-=== Basic Formatting
-
-[source,yaml]
-----
-comment: |
-  **Bold text** and *italic text*
-  
-  ## Heading 2
-  ### Heading 3
-  
-  - Bullet point 1
-  - Bullet point 2
-  
-  1. Numbered list
-  2. Second item
-  
-  `inline code` and:
-  
-  ```
-  code block
-  with multiple lines
-  ```
-  
-  [Link text](https://example.com)
-----
-
-=== Status Indicators
-
-[source,yaml]
-----
-comment: |
-  📋 **Status Update**
-  
-  ✅ Completed tasks:
-  - Database migration
-  - API endpoints updated
-  - Tests written
-  
-  ⏳ In progress:
-  - Code review
-  - Documentation update
-  
-  ❌ Blocked:
-  - Waiting for security review
-  
-  🎯 **Next Steps:**
-  1. Complete code review
-  2. Update documentation
-  3. Deploy to staging
-----
-
-=== Tables and Lists
-
-[source,yaml]
-----
-comment: |
-  📊 **Test Results Summary**
-  
-  | Test Suite | Status | Coverage |
-  |------------|--------|----------|
-  | Unit Tests | ✅ Pass | 95% |
-  | Integration | ✅ Pass | 87% |
-  | E2E Tests | ❌ Fail | 78% |
-  
-  **Failed Tests:**
-  - Login flow test
-  - Payment processing test
-  
-  **Action Required:**
-  Please investigate failed E2E tests before release.
-----
-
-== Visibility Levels
-
-Control who can see your comments:
-
-=== Public Comments (Default)
-```yaml
-visibility: "all"  # or omit this field
-```
-Visible to everyone who can view the issue.
-
-=== Internal Comments
-```yaml
-visibility: "internal"
-```
-Visible only to internal team members (jira-users group).
-
-=== Group-Specific Comments
-```yaml
-visibility: "group:developers"
-```
-Visible only to members of the specified group.
-
-=== Role-Specific Comments
-```yaml
-visibility: "role:Administrators"
-```
-Visible only to users with the specified project role.
-
-== Error Handling
-
-The action handles various error scenarios gracefully:
-
-* **Permission denied**: User can't comment on the issue
-* **Issue not found**: Issue deleted or no access
-* **Invalid visibility**: Group/role doesn't exist
-* **Network issues**: API connectivity problems
-
-=== Handling Partial Failures
-
-When using JQL to comment on multiple issues:
-
-[source,yaml]
-----
-- name: Bulk comment with error handling
-  uses: ./jira-add-comment
-  id: bulk-comment
-  continue-on-error: true
-  with:
-    jql: "project = MYPROJECT AND status = 'In Progress'"
-    comment: "Status update message"
-    continue-on-error: true
-
-- name: Handle partial failures
-  uses: docker://alpine:3.22
-  shell: sh
-  run: |
-    apk add --no-cache jq
-    
-    SUCCESS_COUNT=${{ steps.bulk-comment.outputs.comment-count }}
-    FAILED_COUNT=$(echo '${{ steps.bulk-comment.outputs.failed-comments }}' | jq 'length')
-    
-    echo "Successfully commented: $SUCCESS_COUNT issues"
-    echo "Failed to comment: $FAILED_COUNT issues"
-    
-    if [ "$FAILED_COUNT" -gt 0 ]; then
-      echo "Failed issues:"
-      echo '${{ steps.bulk-comment.outputs.failed-comments }}' | jq -r '.[] | "- \(.issue.key): \(.error)"'
-    fi
-----
-
-== Integration Patterns
-
-=== Complete Deployment Pipeline
-
-[source,yaml]
-----
-# 1. Create deployment issue
-- uses: ./jira-create-issue
-  id: deployment
-  with:
-    project-key: OPS
-    issue-type: Task
-    issue-fields: |
-      summary: "Deploy ${{ github.ref_name }} to production"
-
-# 2. Wait for approval
-- uses: ./jira-wait-for-status
-  with:
-    issue-key: ${{ steps.deployment.outputs.issue-key }}
-    target-status: "Approved"
-
-# 3. Deploy
-- name: Deploy to production
-  run: ./deploy.sh
-
-# 4. Comment with results
-- uses: ./jira-add-comment
-  with:
-    issue-key: ${{ steps.deployment.outputs.issue-key }}
     comment: |
       🚀 **Deployment Complete**
       
-      Version ${{ github.ref_name }} successfully deployed!
-      ✅ All health checks passed
-      ✅ Monitoring active
+      Version ${{ github.ref_name }} deployed successfully!
+      Build: ${{ github.run_id }}
 ----
 
-=== Release Communication
+=== Add Comments to Multiple Issues
 
 [source,yaml]
 ----
-# Comment on all issues in the release
-- uses: ./jira-add-comment
+- name: Update release issues
+  uses: https://github.com/cloudbees-days/jira-add-comment@v1
   with:
-    jql: "fixVersion = '${{ github.ref_name }}'"
-    comment: |
-      🎉 **Release ${{ github.ref_name }} Available**
-      
-      This issue has been included in the latest release.
-      
-      **What's New:**
-      - Performance improvements
-      - Bug fixes
-      - New features
-      
-      [View Release Notes](link-to-release-notes)
+    jira-url: ${{ vars.JIRA_URL }}
+    jira-username: ${{ vars.JIRA_USERNAME }}
+    jira-token: ${{ secrets.JIRA_TOKEN }}
+    jql: "project = PROJ AND fixVersion = '${{ github.ref_name }}'"
+    comment: "Release ${{ github.ref_name }} is now available!"
+    max-results: 100
 ----
 
-== Best Practices
+== Setup
 
-1. **Use meaningful formatting**: Make comments easy to scan with headers and lists
-2. **Include relevant context**: Build IDs, commit hashes, timestamps
-3. **Choose appropriate visibility**: Don't expose sensitive information unnecessarily
-4. **Handle failures gracefully**: Use `continue-on-error` for bulk operations
-5. **Link to external resources**: Provide links to builds, logs, documentation
-6. **Use consistent templates**: Standardize comment formats for similar operations
+=== Authentication
+
+1. Go to [Atlassian Account Settings](https://id.atlassian.com/manage-profile/security/api-tokens)
+2. Create an API token
+3. Store as secrets/variables in CloudBees:
+   - `JIRA_URL`: Your Jira instance URL
+   - `JIRA_USERNAME`: Your email address  
+   - `JIRA_TOKEN`: Your API token (store as secret)
+
+=== Troubleshooting
+
+**Permission Errors**: Ensure your user can access the project and add comments
+**Issue Not Found**: Check the issue key exists and you have permission to view it
+**Invalid JQL**: Test your JQL query in Jira's issue search first
 
 == License
 
@@ -530,6 +141,4 @@ link:https://opensource.org/license/mit/[MIT license].
 
 == References
 
-* link:https://confluence.atlassian.com/jirasoftwarecloud/formatting-text-776636364.html[Jira Text Formatting Guide]
-* link:https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-comments/#api-rest-api-3-issue-issueidorkey-comment-post[Jira Add Comment API]
 * Learn more about link:https://docs.cloudbees.com/docs/cloudbees-saas-platform-actions/latest/[using actions in CloudBees workflows]. 
