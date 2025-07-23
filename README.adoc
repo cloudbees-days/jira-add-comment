@@ -98,8 +98,8 @@ Add comments to Jira issues with support for single issues or multiple issues vi
     comment: |
       🚀 **Deployment Complete**
       
-      Version ${{ github.ref_name }} deployed successfully!
-      Build: ${{ github.run_id }}
+      Version ${{ cloudbees.scm.ref_name }} deployed successfully!
+      Build: ${{ cloudbees.run_id }}
 ----
 
 === Add Comments to Multiple Issues
@@ -112,8 +112,8 @@ Add comments to Jira issues with support for single issues or multiple issues vi
     jira-url: ${{ vars.JIRA_URL }}
     jira-username: ${{ vars.JIRA_USERNAME }}
     jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = PROJ AND fixVersion = '${{ github.ref_name }}'"
-    comment: "Release ${{ github.ref_name }} is now available!"
+    jql: "project = PROJ AND fixVersion = '${{ cloudbees.scm.ref_name }}'"
+    comment: "Release ${{ cloudbees.scm.ref_name }} is now available!"
     max-results: 100
 ----
 
