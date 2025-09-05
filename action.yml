@@ -47,7 +47,7 @@ runs:
   steps:
     - id: add-comment
       name: Add Comment to Jira Issues
-      uses: docker://cloudbeesdemo/jira-actions:latest
+      uses: docker://cloudbeesdemo/jira-actions:v2
       shell: sh
       run: |
         /app/jira-actions add-comment \
